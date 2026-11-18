@@ -1,0 +1,55 @@
+name: Build uu-wol-only arm64 image
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    # GitHub 官方 arm64 runner，原生编译，无需 QEMU
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 60
+    steps:
+      - name: Checkout pinned source
+        uses: actions/checkout@v4
+        with:
+          ref: 66707aeb20f0021b45ac5f95d4aec243197b4c41
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build linux/arm64 image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: labs/gpl-isolation/docker/Dockerfile
+          platforms: linux/arm64
+          load: true
+          tags: uu-gpl-wol-only:isolated-lab
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Export image tar
+        run: |
+          set -euo pipefail
+          arch=$(docker image inspect uu-gpl-wol-only:isolated-lab --format '{{.Architecture}}')
+          echo "image arch: $arch"
+          if [ "$arch" != "arm64" ]; then
+            echo "unexpected arch: $arch" >&2
+            exit 1
+          fi
+          docker save uu-gpl-wol-only:isolated-lab | gzip -9 > uu-wol-arm64.tar.gz
+          sha256sum uu-wol-arm64.tar.gz | tee uu-wol-arm64.sha256
+          ls -lh uu-wol-arm64.tar.gz
+
+      - name: Upload image artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: uu-wol-arm64-image
+          path: |
+            uu-wol-arm64.tar.gz
+            uu-wol-arm64.sha256
+          retention-days: 14
+          compression-level: 0
