@@ -108,7 +108,8 @@ async fn wol_only_host() -> Result<(), Box<dyn std::error::Error>> {
                     let data = value.get("data").unwrap_or(value);
                     match wol::handle_push(data) {
                         Ok(1) => log::info!("WOL-only one authorized magic packet sent"),
-                        _ => log::warn!("WOL-only denied or failed a wake request"),
+                        Ok(count) => log::warn!("WOL-only denied or failed a wake request: count={count}"),
+                        Err(error) => log::warn!("WOL-only denied or failed a wake request: {error}"),
                     }
                 }
                 Some(SignalingEvent::Disconnected) | None => break,
