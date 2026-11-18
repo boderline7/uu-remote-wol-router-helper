@@ -245,27 +245,29 @@ fn wol_only_destination(
         .ok_or("missing target_device")?;
     let value = |name: &str| target.get(name)
         .and_then(serde_json::Value::as_str).unwrap_or("");
-    let target_mac = parse_mac(value("mac")).ok_or("invalid target MAC")?;
     let approved = parse_mac(allowed_mac).ok_or("invalid allowlisted MAC")?;
-    if target_mac != approved { return Err("target MAC not allowlisted".into()); }
-    let target_ip: Ipv4Addr = value("ip").parse().map_err(|_| "invalid target IP")?;
-    let target_mask: Ipv4Addr = value("subnet_mask")
-        .parse().map_err(|_| "invalid target mask")?;
+    match parse_mac(value("mac")) {
+        Some(mac) if mac == approved => {}
+        Some(_) => log::warn!(
+            "WOL-only push MAC differs from allowlist; waking allowlisted target"),
+        None => log::warn!(
+            "WOL-only push carried no usable MAC; waking allowlisted target"),
+    }
     let local_ip: Ipv4Addr = lan_ip.parse().map_err(|_| "invalid LAN IP")?;
     let local_mask: Ipv4Addr = lan_mask.parse().map_err(|_| "invalid LAN mask")?;
     let mask = u32::from(local_mask);
-    if target_mask != local_mask || mask.leading_ones() < 8 ||
-        mask.leading_ones() > 30 || mask.leading_ones() +
-        mask.trailing_zeros() != 32 {
-        return Err("LAN prefix mismatch or unsupported mask".into());
+    if mask.leading_ones() < 8 || mask.leading_ones() > 30 ||
+        mask.leading_ones() + mask.trailing_zeros() != 32 {
+        return Err("unsupported LAN mask".into());
     }
-    if (u32::from(target_ip) & mask) != (u32::from(local_ip) & mask) ||
-        target_ip == local_ip {
-        return Err("target outside approved LAN".into());
+    if let Ok(target_ip) = value("ip").parse::<Ipv4Addr>() {
+        if target_ip == local_ip {
+            log::warn!("WOL-only target equals helper address; using LAN broadcast");
+        }
     }
     let broadcast = subnet_broadcast(&lan_ip.to_string(), lan_mask)
         .ok_or("invalid LAN broadcast")?;
-    if target_ip == broadcast || broadcast == Ipv4Addr::BROADCAST {
+    if broadcast == Ipv4Addr::BROADCAST {
         return Err("unsafe broadcast target".into());
     }
     Ok(SocketAddrV4::new(broadcast, 9))
@@ -342,7 +344,8 @@ fn wol_only_bind_interface(_: &UdpSocket, _: &str) -> Result<(), String> {
         let (_, lan_ip, lan_mask) = lan_info()
             .ok_or("WOL-only LAN identity unavailable")?;
         let destination = wol_only_destination(data, &allowed, &lan_ip, &lan_mask)?;
-        let packet = magic_packet(mac);
+        let approved = parse_mac(&allowed).ok_or("invalid allowlisted MAC")?;
+        let packet = magic_packet(approved);
         let source_ip: Ipv4Addr = lan_ip.parse()
             .map_err(|_| "WOL-only source address invalid")?;
         let socket = UdpSocket::bind(SocketAddrV4::new(source_ip, 0))
