@@ -89,15 +89,18 @@ async fn wol_only_host() -> Result<(), Box<dyn std::error::Error>> {
                     if wol::lan_info().is_none() {
                         return Err("WOL-only LAN interface invalid".into());
                     }
-                }
-                Some(SignalingEvent::RoomInfoAck(ref ack)) => {
-                    if !wol_only_room_ack_ok(ack) {
-                        log::warn!("WOL-only room authorization acknowledgement denied");
-                        break;
-                    }
+                    // Upstream registers the helper on Connected, independently of the
+                    // room_info ack; only then does the cloud forward wake pushes here.
                     if !room_authorized {
                         room_authorized = true;
                         wol::report(&auth).await;
+                    }
+                }
+                Some(SignalingEvent::RoomInfoAck(ref ack)) => {
+                    // Upstream treats this ack as informational; a non-success ack must
+                    // not tear down an already registered WOL-only helper.
+                    if !wol_only_room_ack_ok(ack) {
+                        log::warn!("WOL-only room acknowledgement not success; continuing");
                     }
                 }
                 Some(SignalingEvent::DeviceInfoChanged(ref value))
